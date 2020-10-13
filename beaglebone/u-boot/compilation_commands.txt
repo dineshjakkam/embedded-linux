@@ -14,22 +14,22 @@ export PATH=$PATH:~/BBB_Workspace/Downloads/gcc-linaro-6.3.1-2017.02-x86_64_arm-
 
 STEP 1: distclean : deletes all the previously compiled/generated object files. 
 
-make CROSS_COMPILE=arm-linux-gnueabihf- distclean
+make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- distclean
 
 STEP 2 : apply board default configuration for uboot
 
-make CROSS_COMPILE=arm-linux-gnueabihf- am335x_boneblack_defconfig
+make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- am335x_boneblack_defconfig
 
 
 STEP 3 : run menuconfig, if you want to do any settings other than default configuration . 
 
-make CROSS_COMPILE=arm-linux-gnueabihf-  menuconfig
+make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-  menuconfig
 
 
 STEP 4 : compile 
 
-make CROSS_COMPILE=arm-linux-gnueabihf- -j4  // -j4(4 core machine) will instructs the make tool to spawn 4 threads
-make CROSS_COMPILE=arm-linux-gnueabihf- -j8  // -j8(8 core machine) will instructs the make tool to spawn 8 threads
+make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j4  // -j4(4 core machine) will instructs the make tool to spawn 4 threads
+make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j8  // -j8(8 core machine) will instructs the make tool to spawn 8 threads
 
 
 ************************* linux compilation ***************************************************
