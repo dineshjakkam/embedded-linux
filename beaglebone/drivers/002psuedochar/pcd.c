@@ -4,6 +4,7 @@
 #include<linux/device.h>
 #include<linux/kdev_t.h>
 #include<linux/err.h>
+#include<linux/uaccess.h>
 
 #define DEVICE_MEM_SIZE 512
 #undef pr_fmt
@@ -21,14 +22,52 @@ struct class* class_pcd;
 struct device* device_pcd;
 
 loff_t pcd_lseek(struct file *filep, loff_t off, int whence){
+	loff_t tmp;
 	pr_info("lseek requested\n");
-
+	pr_info("Current file position = %lld\n", filep->f_pos);
+	
+	switch(whence){
+		case SEEK_SET:
+			if( (off > DEVICE_MEM_SIZE) || (off < 0) )
+				return -EINVAL;
+			filep->f_pos = off;
+			break;
+		case SEEK_CUR:
+			tmp = filep->f_pos + off;
+			if( (tmp > DEVICE_MEM_SIZE) || (tmp<0))
+				return -EINVAL;
+			filep->f_pos = tmp;
+			break;
+		case SEEK_END:
+		deafult:
+			return -EINVAL;
+	};
+			
+	pr_info("Current file position after lseek = %lld\n", filep->f_pos);
 	return 0;
 }
         
 ssize_t pcd_read(struct file *filep, char __user *buffer, size_t count, loff_t *f_pos){
 	pr_info("Read requested for %zu bytes\n", count);
-	return 0;
+	pr_info("Initial file position = %lld\n", *f_pos);
+	
+	/* Adjust the count */
+	if((*f_pos + count) > DEVICE_MEM_SIZE)
+		count = DEVICE_MEM_SIZE - *f_pos;
+
+	/* Copy to user */
+	if(copy_to_user(buffer, &device_buffer[*f_pos], count)){
+		return -EFAULT;
+	}
+	
+	/* Uodate the current file position */
+	*f_pos += count;
+	
+	pr_info("Number of bytes successfully read is %zu\n", count);
+	pr_info("Updated file position = %lld\n", *f_pos);
+	
+	/* Return numbe rof bytes successfully read */
+	return count;
 }
 
 ssize_t pcd_write(struct file *filep, const char __user *buffer, size_t count, loff_t *f_pos){
