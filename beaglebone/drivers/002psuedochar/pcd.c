@@ -72,7 +72,26 @@ ssize_t pcd_read(struct file *filep, char __user *buffer, size_t count, loff_t *
 
 ssize_t pcd_write(struct file *filep, const char __user *buffer, size_t count, loff_t *f_pos){
 	pr_info("Write requested for %zu bytes\n", count);
-	return 0;
+	pr_info("Initial file position = %lld\n", *f_pos); 
+
+	if((*f_pos + count) > DEVICE_MEM_SIZE || (count < 0)){
+		count = DEVICE_MEM_SIZE - *f_pos;
+	}
+
+	if(!count){
+		pr_warning("No space remaining on device to write new bytes\n");
+		return -ENOMEM;
+	}
+	
+	if(copy_from_user(&device_buffer[*f_pos], buffer, count)){
+		return -EFAULT;
+	}
+	*f_pos += count;
+
+	pr_info("Number of bytes successfully written = %zu\n", count);
+	pr_info("Updated file position = %lld\n", *f_pos);
+
+	return count;
 }
 
 int pcd_open(struct inode *p_inode, struct file *filep){
@@ -135,6 +154,7 @@ static int __init pcd_driver_init(void){
                 goto class_del;
         }
 
+	pr_info("Module loaded succesfully\n");
 	return 0;
 
 	
@@ -151,7 +171,6 @@ out:
 	pr_warn("Module insertion failed\n");
 	return ret;
 }
-
 static void __exit pcd_driver_exit(void){
 	device_destroy(class_pcd, device_num);
 	class_destroy(class_pcd);
@@ -169,3 +188,4 @@ MODULE_AUTHOR("Jakkampudi Venkata Dinesh");
 MODULE_DESCRIPTION("A device driver for the pseudo character device");
 MODULE_INFO(board, "BEAGLE BONE BLACK");
 	
+
