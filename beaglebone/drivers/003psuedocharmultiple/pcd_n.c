@@ -39,6 +39,36 @@ struct pcdrv_private_data{
 	struct pcdev_private_data pcdev_data[NUMBER_OF_DEVICES];
 };
 
+struct pcdrv_private_data pcdrv_data = {
+	.total_devices = NUMBER_OF_DEVICES,
+	.pcdev_data = {
+		[0] = {
+			.buffer = device_buffer_dev1,
+			.size = MEM_SIZE_MAX_DEV1,
+			.serial_number = "PCDEV1XYZ123",
+			.perm = 0x1 /* RDONLY */
+		},
+		[1] = {
+			.buffer = device_buffer_dev2,
+			.size = MEM_SIZE_MAX_DEV2,
+			.serial_number = "PCDEV2XYZ123",
+			.perm = 0x10 /* WRONLY */
+		},
+		[2] = {
+			.buffer = device_buffer_dev3,
+			.size = MEM_SIZE_MAX_DEV3,
+			.serial_number = "PCDEV3XYZ123",
+			.perm = 0x11 /* RDWR */
+		},
+		[3] = {
+			.buffer = device_buffer_dev4,
+			.size = MEM_SIZE_MAX_DEV4,
+			.serial_number = "PCDEV4XYZ123",
+			.perm = 0x11 /* RDWR */
+		}
+	}
+};
+
 #if 0
 loff_t pcd_lseek(struct file *filep, loff_t off, int whence){
 	loff_t tmp;
@@ -123,84 +153,85 @@ int pcd_release(struct inode *p_inode, struct file *filep){
 	return 0;
 }
 
-/* struct to hold the file operations of the driver */
-struct file_operations pcd_fops = {
-	.open = pcd_open,
-	.write = pcd_write,
-	.read = pcd_read,
-	.llseek = pcd_lseek,
-	.release = pcd_release,
-	.owner = THIS_MODULE
-};
 #endif
 
+/* struct to hold the file operations of the driver */
+struct file_operations pcd_fops;
+
 static int __init pcd_driver_init(void){
-	int ret;
-#if 0
+	int ret, i;
+
 	/* Dynamically allocate a device number */
-	ret = alloc_chrdev_region(&device_num, 0, 1, "pcd_devices");
+	ret = alloc_chrdev_region(&pcdrv_data.device_num, 0, NUMBER_OF_DEVICES, "pcd_devices");
 	if(ret < 0){
 		pr_warn("Device number allocation failed\n");
 		goto out;
 	}
 
-	pr_info("Device number <major>:<minor> = %d:%d\n", MAJOR(device_num), MINOR(device_num));
-	
-	/* Initialize character device with the device structure and fops structure */
-	cdev_init(&pcd_dev, &pcd_fops);
-	pcd_dev.owner = THIS_MODULE;
-
-	/* Register device (cdev structure) with the VFS */
-	ret = cdev_add(&pcd_dev, device_num, 1);
-	if(ret < 0){
-		pr_warn("Device addition failed\n");
-		goto unreg_chrdev;
-	}
-
 	/* Create device class under /sys/class */
-	class_pcd = class_create(THIS_MODULE, "pcd_class");
-	if(IS_ERR(class_pcd)){
+	pcdrv_data.class_pcd = class_create(THIS_MODULE, "pcd_class");
+	if(IS_ERR(pcdrv_data.class_pcd)){
 		pr_err("Class creation failed\n");
-		ret = PTR_ERR(class_pcd);
-		goto cdev_del;
+		ret = PTR_ERR(pcdrv_data.class_pcd);
+		goto unreg_chrdev;
 	}	
+	
+	for(i=0; i<NUMBER_OF_DEVICES; i++){
+		pr_info("Device number <major>:<minor> = %d:%d\n", MAJOR(pcdrv_data.device_num+i), MINOR(pcdrv_data.device_num+i));
+	
+		/* Initialize character device with the device structure and fops structure */
+		cdev_init(&pcdrv_data.pcdev_data[i].cdev, &pcd_fops);
+		pcdrv_data.pcdev_data[i].cdev.owner = THIS_MODULE;
 
-	/* Populate the sysfs with device information */
-	device_pcd = device_create(class_pcd, NULL, device_num, NULL, "pcd");
-	if(IS_ERR(device_pcd)){
-                pr_err("Device creation failed\n");
-                ret = PTR_ERR(device_pcd);
-                goto class_del;
-        }
+		/* Register device (cdev structure) with the VFS */
+		ret = cdev_add(&pcdrv_data.pcdev_data[i].cdev, pcdrv_data.device_num+1, NUMBER_OF_DEVICES);
+		if(ret < 0){
+			pr_warn("Device addition failed\n");
+			goto class_del;
+		}
 
+		/* Populate the sysfs with device information */
+		pcdrv_data.device_pcd = device_create(pcdrv_data.class_pcd, NULL, pcdrv_data.device_num+i, NULL, "pcd-%d",i+1);
+		if(IS_ERR(pcdrv_data.device_pcd)){
+                	pr_err("Device creation failed\n");
+                	ret = PTR_ERR(pcdrv_data.device_pcd);
+                	goto cdev_del;
+        	}
+	}
 	pr_info("Module loaded succesfully\n");
 	return 0;
 
 	
-class_del:
-	class_destroy(class_pcd);
-
 cdev_del:
-	cdev_del(&pcd_dev);
+	cdev_del(&pcdrv_data.pcdev_data[i].cdev);
+
+class_del:
+	if(i>0){
+		for(i=i-1; i>=0; i--){
+			pr_info("Destroying device %d\n", i);
+			device_destroy(pcdrv_data.class_pcd, pcdrv_data.device_num+i);
+			cdev_del(&pcdrv_data.pcdev_data[i].cdev);
+		}
+	}
+	class_destroy(pcdrv_data.class_pcd);
 
 unreg_chrdev:
-	unregister_chrdev_region(device_num, 1);
+	unregister_chrdev_region(pcdrv_data.device_num, NUMBER_OF_DEVICES);
 
 out:
 	pr_warn("Module insertion failed\n");
 	return ret;
-#endif
- return 0;
 }
 
 static void __exit pcd_driver_exit(void){
-#if 0
-	device_destroy(class_pcd, device_num);
-	class_destroy(class_pcd);
-	cdev_del(&pcd_dev);
-	unregister_chrdev_region(device_num, 1);
-	pr_info("%s module unloaded\n", THIS_MODULE->name);
-#endif
+	int i;
+	for(i=0; i<NUMBER_OF_DEVICES; i++){
+		device_destroy(pcdrv_data.class_pcd, pcdrv_data.device_num+i);	
+		cdev_del(&pcdrv_data.pcdev_data[i].cdev);
+	}	
+		class_destroy(pcdrv_data.class_pcd);
+		unregister_chrdev_region(pcdrv_data.device_num, NUMBER_OF_DEVICES);
+		pr_info("%s module unloaded\n", THIS_MODULE->name);
 }
 
 module_init(pcd_driver_init);
