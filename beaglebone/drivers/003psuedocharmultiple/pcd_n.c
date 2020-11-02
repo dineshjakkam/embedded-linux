@@ -39,6 +39,10 @@ struct pcdrv_private_data{
 	struct pcdev_private_data pcdev_data[NUMBER_OF_DEVICES];
 };
 
+#define RDONLY 0x01
+#define WRONLY 0x10
+#define RDWR 0x11
+
 struct pcdrv_private_data pcdrv_data = {
 	.total_devices = NUMBER_OF_DEVICES,
 	.pcdev_data = {
@@ -46,66 +50,70 @@ struct pcdrv_private_data pcdrv_data = {
 			.buffer = device_buffer_dev1,
 			.size = MEM_SIZE_MAX_DEV1,
 			.serial_number = "PCDEV1XYZ123",
-			.perm = 0x1 /* RDONLY */
+			.perm = RDONLY /* RDONLY */
 		},
 		[1] = {
 			.buffer = device_buffer_dev2,
 			.size = MEM_SIZE_MAX_DEV2,
 			.serial_number = "PCDEV2XYZ123",
-			.perm = 0x10 /* WRONLY */
+			.perm = WRONLY /* WRONLY */
 		},
 		[2] = {
 			.buffer = device_buffer_dev3,
 			.size = MEM_SIZE_MAX_DEV3,
 			.serial_number = "PCDEV3XYZ123",
-			.perm = 0x11 /* RDWR */
+			.perm = RDWR /* RDWR */
 		},
 		[3] = {
 			.buffer = device_buffer_dev4,
 			.size = MEM_SIZE_MAX_DEV4,
 			.serial_number = "PCDEV4XYZ123",
-			.perm = 0x11 /* RDWR */
+			.perm = RDWR /* RDWR */
 		}
 	}
 };
 
-#if 0
 loff_t pcd_lseek(struct file *filep, loff_t off, int whence){
-	loff_t tmp;
+	struct pcdev_private_data* pcdev_data = (struct pcdev_private_data *)filep->private_data;
+	
+	int max_data = pcdev_data -> size;off_t tmp;
 	pr_info("lseek requested\n");
 	pr_info("Current file position = %lld\n", filep->f_pos);
 	
 	switch(whence){
 		case SEEK_SET:
-			if( (off > DEVICE_MEM_SIZE) || (off < 0) )
+			if( (off > max_data) || (off < 0) )
 				return -EINVAL;
 			filep->f_pos = off;
 			break;
 		case SEEK_CUR:
 			tmp = filep->f_pos + off;
-			if( (tmp > DEVICE_MEM_SIZE) || (tmp<0))
+			if( (tmp > max_data) || (tmp<0))
 				return -EINVAL;
 			filep->f_pos = tmp;
 			break;
 		case SEEK_END:
-		deafult:
+		default:
 			return -EINVAL;
 	};
 			
 	pr_info("Current file position after lseek = %lld\n", filep->f_pos);
 	return 0;
 }
-        
+
 ssize_t pcd_read(struct file *filep, char __user *buffer, size_t count, loff_t *f_pos){
+	struct pcdev_private_data* pcdev_data = (struct pcdev_private_data *)filep->private_data;
+	
+	int max_data = pcdev_data -> size;
 	pr_info("Read requested for %zu bytes\n", count);
 	pr_info("Initial file position = %lld\n", *f_pos);
 	
 	/* Adjust the count */
-	if((*f_pos + count) > DEVICE_MEM_SIZE)
-		count = DEVICE_MEM_SIZE - *f_pos;
+	if((*f_pos + count) > max_data)
+		count = max_data - *f_pos;
 
 	/* Copy to user */
-	if(copy_to_user(buffer, &device_buffer[*f_pos], count)){
+	if(copy_to_user(buffer, &pcdev_data->buffer[*f_pos], count)){
 		return -EFAULT;
 	}
 	
@@ -120,11 +128,15 @@ ssize_t pcd_read(struct file *filep, char __user *buffer, size_t count, loff_t *
 }
 
 ssize_t pcd_write(struct file *filep, const char __user *buffer, size_t count, loff_t *f_pos){
+	struct pcdev_private_data* pcdev_data = (struct pcdev_private_data *)filep->private_data;
+	
+	int max_data = pcdev_data -> size;
+	
 	pr_info("Write requested for %zu bytes\n", count);
 	pr_info("Initial file position = %lld\n", *f_pos); 
 
-	if((*f_pos + count) > DEVICE_MEM_SIZE || (count < 0)){
-		count = DEVICE_MEM_SIZE - *f_pos;
+	if((*f_pos + count) > max_data || (count < 0)){
+		count = max_data - *f_pos;
 	}
 
 	if(!count){
@@ -132,7 +144,7 @@ ssize_t pcd_write(struct file *filep, const char __user *buffer, size_t count, l
 		return -ENOMEM;
 	}
 	
-	if(copy_from_user(&device_buffer[*f_pos], buffer, count)){
+	if(copy_from_user(&pcdev_data->buffer[*f_pos], buffer, count)){
 		return -EFAULT;
 	}
 	*f_pos += count;
@@ -143,9 +155,44 @@ ssize_t pcd_write(struct file *filep, const char __user *buffer, size_t count, l
 	return count;
 }
 
+int check_permission(int perm, int mode){
+	if(perm == RDWR){
+		return 0;
+	}
+	else if(perm == RDONLY){
+		if((mode & FMODE_READ) && !(mode & FMODE_WRITE)){
+			return 0;
+		}
+	}
+	else if(perm == WRONLY){
+		if(!(mode & FMODE_READ) && (mode & FMODE_WRITE)){
+			return 0;
+		}
+	}
+	return -EPERM;
+}
+
 int pcd_open(struct inode *p_inode, struct file *filep){
-	pr_info("Open was successful\n");
-	return 0;
+	int ret, minor_n;
+	struct pcdev_private_data* pcdev_data;
+
+	/* Find out which device file open was attempted by the uer space */
+	minor_n = MINOR(p_inode->i_rdev);
+	pr_info("Minore access = %d\n", minor_n);
+	
+	/* Get device's private data structure */
+	pcdev_data = container_of(p_inode->i_cdev, struct pcdev_private_data, cdev);
+
+	/* To supply device private data to other methods of the driver */
+	filep->private_data = pcdev_data;
+
+	pr_info("permission is %x\n", pcdev_data->perm);
+	/* check permissions */
+	ret = check_permission(pcdev_data->perm, filep->f_mode);
+
+	(!ret) ? pr_info("Open was successful\n") : pr_info("Open was unsuccessfull\n");
+	
+	return ret;
 }
 
 int pcd_release(struct inode *p_inode, struct file *filep){
@@ -153,10 +200,14 @@ int pcd_release(struct inode *p_inode, struct file *filep){
 	return 0;
 }
 
-#endif
-
 /* struct to hold the file operations of the driver */
-struct file_operations pcd_fops;
+struct file_operations pcd_fops = {
+	.open = pcd_open,
+	.write = pcd_write,
+	.read = pcd_read,
+	.release = pcd_release,
+	.llseek = pcd_lseek,
+};
 
 static int __init pcd_driver_init(void){
 	int ret, i;
@@ -184,7 +235,7 @@ static int __init pcd_driver_init(void){
 		pcdrv_data.pcdev_data[i].cdev.owner = THIS_MODULE;
 
 		/* Register device (cdev structure) with the VFS */
-		ret = cdev_add(&pcdrv_data.pcdev_data[i].cdev, pcdrv_data.device_num+1, NUMBER_OF_DEVICES);
+		ret = cdev_add(&pcdrv_data.pcdev_data[i].cdev, pcdrv_data.device_num+i, NUMBER_OF_DEVICES);
 		if(ret < 0){
 			pr_warn("Device addition failed\n");
 			goto class_del;
