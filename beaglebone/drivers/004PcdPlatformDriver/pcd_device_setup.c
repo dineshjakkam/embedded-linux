@@ -32,7 +32,7 @@ struct platform_device platform_pcdev_2 = {
 };
 
 void pcdev_release(struct device* dev){
-	pr_info("Device released\n");
+	pr_info("Device released.. Freeing up any used memory..\n");
 }
 
 static int __init pcdev_platform_init(void)
